@@ -151,6 +151,10 @@ extern struct adapter_driver stlink_dap_adapter_driver;
 extern struct adapter_driver rshim_dap_adapter_driver;
 #endif
 
+#if BUILD_CH347 == 1
+extern struct adapter_driver ch347_adapter_driver;
+#endif
+
 /**
  * The list of built-in JTAG interfaces, containing entries for those
  * drivers that were enabled by the @c configure script.
@@ -263,6 +267,9 @@ struct adapter_driver *adapter_drivers[] = {
 #endif
 #if BUILD_RSHIM == 1
 		&rshim_dap_adapter_driver,
+#endif
+#if BUILD_CH347 == 1
+		&ch347_adapter_driver,
 #endif
 		NULL,
 	};

@@ -35,6 +35,9 @@ proc ocd_process_reset_inner { MODE } {
 		init {
 			set halt 1
 		}
+		halt {
+			set halt 1
+		}
 		run {
 			set halt 0
 		}

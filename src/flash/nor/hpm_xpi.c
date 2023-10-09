@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2021 hpmicro
+ * Copyright (c) 2021-2023 hpmicro
  *
- * SPDX-License-Identifier: BSD-3-Clause *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
 #ifdef HAVE_CONFIG_H
@@ -38,7 +38,7 @@ typedef struct hpm_xpi_priv {
 static int hpm_xpi_probe(struct flash_bank *bank)
 {
 	int retval = ERROR_OK;
-	struct reg_param reg_params[5];
+	struct reg_param reg_params[6];
 	hpm_xpi_priv_t *xpi_priv;
 	int xlen;
 	hpm_flash_info_t flash_info = {0};
@@ -97,13 +97,15 @@ static int hpm_xpi_probe(struct flash_bank *bank)
 	init_reg_param(&reg_params[1], "a1", xlen, PARAM_OUT);
 	init_reg_param(&reg_params[2], "a2", xlen, PARAM_OUT);
 	init_reg_param(&reg_params[3], "a3", xlen, PARAM_OUT);
-	init_reg_param(&reg_params[4], "ra", xlen, PARAM_OUT);
+	init_reg_param(&reg_params[4], "a4", xlen, PARAM_OUT);
+	init_reg_param(&reg_params[5], "ra", xlen, PARAM_OUT);
 	buf_set_u64(reg_params[0].value, 0, xlen, bank->base);
 	buf_set_u64(reg_params[1].value, 0, xlen, xpi_priv->header);
 	buf_set_u64(reg_params[2].value, 0, xlen, xpi_priv->opt0);
 	buf_set_u64(reg_params[3].value, 0, xlen, xpi_priv->opt1);
-	buf_set_u64(reg_params[4].value, 0, xlen, wa->address + FLASH_INIT + 4);
-	retval = target_run_algorithm(target, 0, NULL, 5, reg_params,
+	buf_set_u64(reg_params[4].value, 0, xlen, xpi_priv->io_base);
+	buf_set_u64(reg_params[5].value, 0, xlen, wa->address + FLASH_INIT + 4);
+	retval = target_run_algorithm(target, 0, NULL, 6, reg_params,
 			wa->address, wa->address + FLASH_INIT + 4, 500, NULL);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Failed to execute run algorithm: %d", retval);
@@ -194,7 +196,7 @@ static int hpm_xpi_auto_probe(struct flash_bank *bank)
 static int hpm_xpi_write(struct flash_bank *bank, const uint8_t *buffer,
 	uint32_t offset, uint32_t count)
 {
-	struct reg_param reg_params[5];
+	struct reg_param reg_params[6];
 	int retval = ERROR_OK;
 	struct target *target;
 	struct working_area *data_wa = NULL;
@@ -240,13 +242,15 @@ static int hpm_xpi_write(struct flash_bank *bank, const uint8_t *buffer,
 	init_reg_param(&reg_params[1], "a1", xlen, PARAM_OUT);
 	init_reg_param(&reg_params[2], "a2", xlen, PARAM_OUT);
 	init_reg_param(&reg_params[3], "a3", xlen, PARAM_OUT);
-	init_reg_param(&reg_params[4], "ra", xlen, PARAM_OUT);
+	init_reg_param(&reg_params[4], "a4", xlen, PARAM_OUT);
+	init_reg_param(&reg_params[5], "ra", xlen, PARAM_OUT);
 	buf_set_u64(reg_params[0].value, 0, xlen, bank->base);
 	buf_set_u64(reg_params[1].value, 0, xlen, xpi_priv->header);
 	buf_set_u64(reg_params[2].value, 0, xlen, xpi_priv->opt0);
 	buf_set_u64(reg_params[3].value, 0, xlen, xpi_priv->opt1);
-	buf_set_u64(reg_params[4].value, 0, xlen, wa->address + FLASH_INIT + 4);
-	retval = target_run_algorithm(target, 0, NULL, 5, reg_params,
+	buf_set_u64(reg_params[4].value, 0, xlen, xpi_priv->io_base);
+	buf_set_u64(reg_params[5].value, 0, xlen, wa->address + FLASH_INIT + 4);
+	retval = target_run_algorithm(target, 0, NULL, 6, reg_params,
 			wa->address, wa->address + FLASH_INIT + 4, 500, NULL);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Failed to execute run algorithm: %d", retval);
@@ -345,7 +349,7 @@ err:
 static int hpm_xpi_erase(struct flash_bank *bank, unsigned int first, unsigned int last)
 {
 	int retval = ERROR_OK;
-	struct reg_param reg_params[5];
+	struct reg_param reg_params[6];
 	struct target *target = bank->target;
 	struct working_area *wa = NULL;
 	int xlen;
@@ -387,13 +391,15 @@ static int hpm_xpi_erase(struct flash_bank *bank, unsigned int first, unsigned i
 	init_reg_param(&reg_params[1], "a1", xlen, PARAM_OUT);
 	init_reg_param(&reg_params[2], "a2", xlen, PARAM_OUT);
 	init_reg_param(&reg_params[3], "a3", xlen, PARAM_OUT);
-	init_reg_param(&reg_params[4], "ra", xlen, PARAM_OUT);
+	init_reg_param(&reg_params[4], "a4", xlen, PARAM_OUT);
+	init_reg_param(&reg_params[5], "ra", xlen, PARAM_OUT);
 	buf_set_u64(reg_params[0].value, 0, xlen, bank->base);
 	buf_set_u64(reg_params[1].value, 0, xlen, xpi_priv->header);
 	buf_set_u64(reg_params[2].value, 0, xlen, xpi_priv->opt0);
 	buf_set_u64(reg_params[3].value, 0, xlen, xpi_priv->opt1);
-	buf_set_u64(reg_params[4].value, 0, xlen, wa->address + FLASH_INIT + 4);
-	retval = target_run_algorithm(target, 0, NULL, 5, reg_params,
+	buf_set_u64(reg_params[4].value, 0, xlen, xpi_priv->io_base);
+	buf_set_u64(reg_params[5].value, 0, xlen, wa->address + FLASH_INIT + 4);
+	retval = target_run_algorithm(target, 0, NULL, 6, reg_params,
 			wa->address, wa->address + FLASH_INIT + 4, 500, NULL);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Failed to execute run algorithm: %d", retval);
@@ -441,7 +447,7 @@ err:
 static int hpm_xpi_erase_chip(struct flash_bank *bank)
 {
 	int retval = ERROR_OK;
-	struct reg_param reg_params[5];
+	struct reg_param reg_params[6];
 	struct target *target = bank->target;
 	struct working_area *wa = NULL;
 	int xlen;
@@ -484,13 +490,15 @@ static int hpm_xpi_erase_chip(struct flash_bank *bank)
 	init_reg_param(&reg_params[1], "a1", xlen, PARAM_OUT);
 	init_reg_param(&reg_params[2], "a2", xlen, PARAM_OUT);
 	init_reg_param(&reg_params[3], "a3", xlen, PARAM_OUT);
-	init_reg_param(&reg_params[4], "ra", xlen, PARAM_OUT);
+	init_reg_param(&reg_params[4], "a4", xlen, PARAM_OUT);
+	init_reg_param(&reg_params[5], "ra", xlen, PARAM_OUT);
 	buf_set_u64(reg_params[0].value, 0, xlen, bank->base);
 	buf_set_u64(reg_params[1].value, 0, xlen, xpi_priv->header);
 	buf_set_u64(reg_params[2].value, 0, xlen, xpi_priv->opt0);
 	buf_set_u64(reg_params[3].value, 0, xlen, xpi_priv->opt1);
-	buf_set_u64(reg_params[4].value, 0, xlen, wa->address + FLASH_INIT + 4);
-	retval = target_run_algorithm(target, 0, NULL, 5, reg_params,
+	buf_set_u64(reg_params[4].value, 0, xlen, xpi_priv->io_base);
+	buf_set_u64(reg_params[5].value, 0, xlen, wa->address + FLASH_INIT + 4);
+	retval = target_run_algorithm(target, 0, NULL, 6, reg_params,
 			wa->address, wa->address + FLASH_INIT + 4, 500, NULL);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Failed to execute run algorithm: %d", retval);

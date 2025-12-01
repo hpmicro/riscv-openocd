@@ -3893,10 +3893,13 @@ static void gdb_keep_client_alive(struct connection *connection)
 	case GDB_OUTPUT_NO:
 		/* no need for keep-alive */
 		break;
+#if 0
+	/* RQ: this notification string cannot be accepted by session 8.24, so disable it as a workaround */
 	case GDB_OUTPUT_NOTIF:
 		/* send asynchronous notification */
 		gdb_async_notif(connection);
 		break;
+#endif
 	case GDB_OUTPUT_ALL:
 		/* send an empty O packet */
 		gdb_output_con(connection, "");

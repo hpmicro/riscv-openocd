@@ -1,0 +1,467 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# GitHub Release workflow for building OpenOCD on Windows, Linux, and macOS
+
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'hpm_xpi_v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    name: Build Linux (x86_64)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:12
+    steps:
+      - name: Install git for checkout
+        run: |
+          apt-get update
+          apt-get install -y git
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            autotools-dev \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            texinfo \
+            libusb-1.0-0-dev \
+            libftdi1-dev \
+            libhidapi-dev \
+            build-essential
+
+      - name: Bootstrap
+        run: ./bootstrap nosubmodule
+
+      - name: Configure
+        env:
+          LDFLAGS: "-static -static-libgcc"
+        run: |
+          ./configure \
+            --disable-werror \
+            --enable-internal-jimtcl \
+            --enable-remote-bitbang \
+            --enable-jtag_vpi \
+            --enable-ftdi-oscan1 \
+            --prefix=/usr/local \
+            --enable-static \
+            --disable-shared \
+            LDFLAGS="-static -static-libgcc"
+
+      - name: Build
+        env:
+          LDFLAGS: "-static -static-libgcc"
+        run: make -j$(nproc) LDFLAGS="-static -static-libgcc"
+
+      - name: Install to staging directory
+        run: |
+          mkdir -p staging
+          make install DESTDIR=$(pwd)/staging
+
+      - name: Create tarball
+        run: |
+          cd staging
+          tar -czf ../openocd-linux-x86_64.tar.gz usr/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openocd-linux-x86_64
+          path: openocd-linux-x86_64.tar.gz
+
+  build-windows:
+    name: Build Windows (i686)
+    runs-on: ubuntu-latest
+    env:
+      DL_DIR: ../downloads
+      BUILD_DIR: ../build
+      HOST: i686-w64-mingw32
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autotools-dev \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            texinfo \
+            g++-mingw-w64-i686 \
+            gcc-mingw-w64-i686
+
+      - name: Bootstrap
+        run: ./bootstrap
+
+      - name: Prepare libusb1
+        env:
+          LIBUSB1_VER: 1.0.24
+        run: |
+          mkdir -p $DL_DIR && cd $DL_DIR
+          wget "https://github.com/libusb/libusb/releases/download/v${LIBUSB1_VER}/libusb-${LIBUSB1_VER}.tar.bz2"
+          tar -xjf libusb-${LIBUSB1_VER}.tar.bz2
+          echo "LIBUSB1_SRC=$PWD/libusb-${LIBUSB1_VER}" >> $GITHUB_ENV
+
+      - name: Prepare hidapi
+        env:
+          HIDAPI_VER: 0.10.1
+        run: |
+          mkdir -p $DL_DIR && cd $DL_DIR
+          wget "https://github.com/libusb/hidapi/archive/hidapi-${HIDAPI_VER}.tar.gz"
+          tar -xzf hidapi-${HIDAPI_VER}.tar.gz
+          cd hidapi-hidapi-${HIDAPI_VER}
+          # Fix configure.ac: remove duplicate AC_CONFIG_MACRO_DIR definitions
+          # Keep only the first occurrence
+          if [ -f configure.ac ]; then
+            awk 'BEGIN{seen=0} /^AC_CONFIG_MACRO_DIR/ {if(seen==0) {print; seen=1} next} {print}' configure.ac > configure.ac.tmp
+            mv configure.ac.tmp configure.ac
+          fi
+          ./bootstrap
+          echo "HIDAPI_SRC=$PWD" >> $GITHUB_ENV
+
+      - name: Prepare capstone
+        env:
+          CAPSTONE_VER: 4.0.2
+        run: |
+          mkdir -p $DL_DIR && cd $DL_DIR
+          CAPSTONE_NAME=${CAPSTONE_VER}
+          CAPSTONE_FOLDER=capstone-${CAPSTONE_VER}
+          wget "https://github.com/aquynh/capstone/archive/${CAPSTONE_VER}.tar.gz"
+          tar -xzf ${CAPSTONE_VER}.tar.gz
+          echo "CAPSTONE_SRC=$PWD/capstone-${CAPSTONE_VER}" >> $GITHUB_ENV
+
+      - name: Prepare jimtcl
+        env:
+          JIMTCL_VER: 0.83
+        run: |
+          mkdir -p $DL_DIR && cd $DL_DIR
+          wget "https://github.com/msteveb/jimtcl/archive/refs/tags/${JIMTCL_VER}.tar.gz"
+          tar -xzf ${JIMTCL_VER}.tar.gz
+          echo "JIMTCL_SRC=$PWD/jimtcl-${JIMTCL_VER}" >> $GITHUB_ENV
+
+      - name: Cross-build OpenOCD for Windows
+        env:
+          MAKE_JOBS: 2
+          LIBUSB1_CONFIG: --enable-static --disable-shared
+          HIDAPI_CONFIG: --enable-static --disable-shared --disable-testgui
+          CAPSTONE_CONFIG: "CAPSTONE_BUILD_CORE_ONLY=yes CAPSTONE_STATIC=yes CAPSTONE_SHARED=no"
+          JIMTCL_CONFIG: --with-ext=json --minimal --disable-ssl
+          OPENOCD_CONFIG: "--disable-werror --enable-static --disable-shared"
+          LDFLAGS: "-static -static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic"
+        run: |
+          OPENOCD_TAG="`git tag --points-at HEAD`"
+          [ -z $OPENOCD_TAG ] && OPENOCD_TAG="`git rev-parse --short HEAD`"
+          export OPENOCD_TAG=$OPENOCD_TAG
+          export OPENOCD_SRC=$PWD
+          export LDFLAGS="-static -static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic"
+          mkdir -p $BUILD_DIR && cd $BUILD_DIR
+          bash $OPENOCD_SRC/contrib/cross-build.sh $HOST
+          # Rebuild OpenOCD with explicit static linking for winpthread and libgcc
+          OPENOCD_BUILD_DIR=$(pwd)/$HOST-build/openocd
+          SYSROOT=$(pwd)/$HOST-root
+          PREFIX=/usr
+          cd $OPENOCD_BUILD_DIR
+          echo "Rebuilding with explicit static linking for winpthread and libgcc..."
+          make clean
+          # Use the pkg-config wrapper created by cross-build.sh
+          # The wrapper is in $BUILD_DIR (where cross-build.sh was called from)
+          # From $BUILD_DIR/$HOST-build/openocd to $BUILD_DIR/$HOST-pkg-config
+          export PKG_CONFIG=$(pwd)/../../$HOST-pkg-config
+          export PKG_CONFIG_LIBDIR=$SYSROOT$PREFIX/lib/pkgconfig:$SYSROOT$PREFIX/share/pkgconfig
+          export PKG_CONFIG_SYSROOT_DIR=$SYSROOT
+          $OPENOCD_SRC/configure --build=`$OPENOCD_SRC/build-aux/config.guess` --host=$HOST \
+            --with-sysroot=$SYSROOT --prefix=$PREFIX \
+            $OPENOCD_CONFIG \
+            LDFLAGS="-static -static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic"
+          make -j $MAKE_JOBS LDFLAGS="-static -static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic"
+          make install-strip DESTDIR=$SYSROOT
+
+      - name: Create Windows package
+        run: |
+          cd $BUILD_DIR/$HOST-root/usr
+          ARTIFACT="openocd-windows-i686.zip"
+          zip -r $ARTIFACT *
+          mv $ARTIFACT $GITHUB_WORKSPACE/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openocd-windows-i686
+          path: openocd-windows-i686.zip
+
+  build-macos-x86_64:
+    name: Build macOS (x86_64)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          brew install autoconf automake libtool pkg-config texinfo
+
+      - name: Build x86_64 static libraries from source
+        run: |
+          BUILD_DIR=$(mktemp -d)
+          cd $BUILD_DIR
+          # Build libusb-1.0 (x86_64 static)
+          LIBUSB_VER=1.0.24
+          wget https://github.com/libusb/libusb/releases/download/v${LIBUSB_VER}/libusb-${LIBUSB_VER}.tar.bz2
+          tar -xjf libusb-${LIBUSB_VER}.tar.bz2
+          cd libusb-${LIBUSB_VER}
+          arch -x86_64 ./configure --prefix=/tmp/x86_64-deps --enable-static --disable-shared CC="arch -x86_64 gcc"
+          arch -x86_64 make -j$(sysctl -n hw.ncpu)
+          arch -x86_64 make install
+          cd ..
+          # Build hidapi (x86_64 static)
+          HIDAPI_VER=0.10.1
+          wget https://github.com/libusb/hidapi/archive/hidapi-${HIDAPI_VER}.tar.gz
+          tar -xzf hidapi-${HIDAPI_VER}.tar.gz
+          cd hidapi-hidapi-${HIDAPI_VER}
+          # Fix configure.ac: remove duplicate AC_CONFIG_MACRO_DIR definitions
+          # Keep only the first occurrence
+          if [ -f configure.ac ]; then
+            awk 'BEGIN{seen=0} /^AC_CONFIG_MACRO_DIR/ {if(seen==0) {print; seen=1} next} {print}' configure.ac > configure.ac.tmp
+            mv configure.ac.tmp configure.ac
+          fi
+          ./bootstrap
+          arch -x86_64 ./configure --prefix=/tmp/x86_64-deps --enable-static --disable-shared --disable-testgui CC="arch -x86_64 gcc"
+          arch -x86_64 make -j$(sysctl -n hw.ncpu)
+          arch -x86_64 make install
+          cd ..
+          # Build Confuse (x86_64 static) - required by libftdi
+          CONFUSE_VER=3.3
+          wget https://github.com/martinh/libconfuse/releases/download/v${CONFUSE_VER}/confuse-${CONFUSE_VER}.tar.xz || \
+          wget https://github.com/libconfuse/libconfuse/releases/download/v${CONFUSE_VER}/confuse-${CONFUSE_VER}.tar.xz || \
+          wget https://github.com/libconfuse/libconfuse/archive/v${CONFUSE_VER}.tar.gz -O confuse-${CONFUSE_VER}.tar.gz
+          if [ -f confuse-${CONFUSE_VER}.tar.xz ]; then
+            tar -xJf confuse-${CONFUSE_VER}.tar.xz
+          else
+            tar -xzf confuse-${CONFUSE_VER}.tar.gz
+            mv libconfuse-${CONFUSE_VER} confuse-${CONFUSE_VER}
+          fi
+          cd confuse-${CONFUSE_VER}
+          if [ -f configure ]; then
+            arch -x86_64 ./configure --prefix=/tmp/x86_64-deps --enable-static --disable-shared CC="arch -x86_64 gcc"
+          else
+            ./autogen.sh || autoreconf -fiv
+            arch -x86_64 ./configure --prefix=/tmp/x86_64-deps --enable-static --disable-shared CC="arch -x86_64 gcc"
+          fi
+          arch -x86_64 make -j$(sysctl -n hw.ncpu)
+          arch -x86_64 make install
+          cd ..
+          # Build libftdi (x86_64 static)
+          LIBFTDI_VER=1.5
+          wget https://www.intra2net.com/en/developer/libftdi/download/libftdi1-${LIBFTDI_VER}.tar.bz2 || \
+          wget https://github.com/intra2net/libftdi/releases/download/v${LIBFTDI_VER}/libftdi1-${LIBFTDI_VER}.tar.bz2
+          tar -xjf libftdi1-${LIBFTDI_VER}.tar.bz2
+          cd libftdi1-${LIBFTDI_VER}
+          # Fix CMakeLists.txt: ensure cmake_minimum_required is before project() and version is 3.5+
+          if [ -f CMakeLists.txt ]; then
+            # Read the file and fix it
+            awk '
+              BEGIN { found_min=0; found_project=0 }
+              /^cmake_minimum_required/ { found_min=1; print "cmake_minimum_required(VERSION 3.5)"; next }
+              /^project\(/ && !found_project { found_project=1; if (!found_min) print "cmake_minimum_required(VERSION 3.5)"; print; next }
+              { print }
+            ' CMakeLists.txt > CMakeLists.txt.fixed
+            mv CMakeLists.txt.fixed CMakeLists.txt
+          fi
+          mkdir build && cd build
+          # Create wrapper scripts for x86_64 compilation
+          echo '#!/bin/bash' > /tmp/x86_64-gcc-wrapper.sh
+          echo 'arch -x86_64 gcc "$@"' >> /tmp/x86_64-gcc-wrapper.sh
+          chmod +x /tmp/x86_64-gcc-wrapper.sh
+          echo '#!/bin/bash' > /tmp/x86_64-g++-wrapper.sh
+          echo 'arch -x86_64 g++ "$@"' >> /tmp/x86_64-g++-wrapper.sh
+          chmod +x /tmp/x86_64-g++-wrapper.sh
+          cmake -DCMAKE_INSTALL_PREFIX=/tmp/x86_64-deps \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLIBUSB_INCLUDE_DIR=/tmp/x86_64-deps/include/libusb-1.0 \
+            -DLIBUSB_LIBRARIES=/tmp/x86_64-deps/lib/libusb-1.0.a \
+            -DCONFUSE_INCLUDE_DIR=/tmp/x86_64-deps/include \
+            -DCONFUSE_LIBRARY=/tmp/x86_64-deps/lib/libconfuse.a \
+            -DCMAKE_C_COMPILER=/tmp/x86_64-gcc-wrapper.sh \
+            -DCMAKE_CXX_COMPILER=/tmp/x86_64-g++-wrapper.sh \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_POLICY_DEFAULT_CMP0048=NEW \
+            -DCMAKE_EXE_LINKER_FLAGS="-framework CoreFoundation -framework IOKit" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-framework CoreFoundation -framework IOKit" \
+            ..
+          arch -x86_64 make -j$(sysctl -n hw.ncpu) ftdi1-static
+          arch -x86_64 make install
+          # Remove shared libraries if they were built
+          rm -f /tmp/x86_64-deps/lib/libftdi1*.dylib
+          # Fix pkg-config file to use static library
+          if [ -f /tmp/x86_64-deps/lib/pkgconfig/libftdi1.pc ]; then
+            sed -i.bak 's/-lftdi1/-lftdi1 -framework CoreFoundation -framework IOKit/g' /tmp/x86_64-deps/lib/pkgconfig/libftdi1.pc
+            sed -i.bak 's/^Libs:.*/Libs: -L${libdir} -lftdi1 -framework CoreFoundation -framework IOKit/g' /tmp/x86_64-deps/lib/pkgconfig/libftdi1.pc
+          fi
+          echo "X86_64_DEPS_PREFIX=/tmp/x86_64-deps" >> $GITHUB_ENV
+
+      - name: Bootstrap
+        run: ./bootstrap
+
+      - name: Configure (x86_64)
+        run: |
+          arch -x86_64 ./configure \
+            --enable-internal-jimtcl \
+            --disable-werror \
+            --disable-parport \
+            --disable-amtjtagaccel \
+            --enable-remote-bitbang \
+            --enable-jtag_vpi \
+            --enable-ftdi-oscan1 \
+            --prefix=/usr/local \
+            --enable-static \
+            --disable-shared \
+            CC="arch -x86_64 gcc" \
+            CXX="arch -x86_64 g++" \
+            PKG_CONFIG_PATH="$X86_64_DEPS_PREFIX/lib/pkgconfig" \
+            PKG_CONFIG="pkg-config --static" \
+            LDFLAGS="-L$X86_64_DEPS_PREFIX/lib -Wl,-search_paths_first" \
+            CPPFLAGS="-I$X86_64_DEPS_PREFIX/include" \
+            LIBS="-lftdi1 -framework CoreFoundation -framework IOKit"
+
+      - name: Build (x86_64)
+        run: arch -x86_64 make -j$(sysctl -n hw.ncpu)
+
+      - name: Install to staging directory
+        run: |
+          mkdir -p staging
+          arch -x86_64 make install DESTDIR=$(pwd)/staging
+
+      - name: Create tarball
+        run: |
+          cd staging
+          tar -czf ../openocd-macos-x86_64.tar.gz usr/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openocd-macos-x86_64
+          path: openocd-macos-x86_64.tar.gz
+
+  build-macos-arm64:
+    name: Build macOS (arm64)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install autoconf automake libtool pkg-config texinfo libusb hidapi libftdi
+
+      - name: Bootstrap
+        run: ./bootstrap
+
+      - name: Configure (arm64)
+        run: |
+          ./configure \
+            --enable-internal-jimtcl \
+            --disable-werror \
+            --disable-parport \
+            --disable-amtjtagaccel \
+            --enable-remote-bitbang \
+            --enable-jtag_vpi \
+            --enable-ftdi-oscan1 \
+            --prefix=/usr/local \
+            --enable-static \
+            --disable-shared
+
+      - name: Build (arm64)
+        run: make -j$(sysctl -n hw.ncpu)
+
+      - name: Install to staging directory
+        run: |
+          mkdir -p staging
+          make install DESTDIR=$(pwd)/staging
+
+      - name: Create tarball
+        run: |
+          cd staging
+          tar -czf ../openocd-macos-arm64.tar.gz usr/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openocd-macos-arm64
+          path: openocd-macos-arm64.tar.gz
+
+  create-release:
+    name: Create Release
+    needs: [build-linux, build-windows, build-macos-x86_64, build-macos-arm64]
+    runs-on: ubuntu-latest
+    # Only create release when pushing a tag, not a branch
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Get tag name
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" =~ ^refs/tags/(.+)$ ]]; then
+            TAG_NAME="${BASH_REMATCH[1]}"
+            echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+            echo "Tag name: $TAG_NAME"
+          else
+            echo "Error: GITHUB_REF is not a tag: $GITHUB_REF"
+            exit 1
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/openocd-linux-x86_64/openocd-linux-x86_64.tar.gz
+            artifacts/openocd-windows-i686/openocd-windows-i686.zip
+            artifacts/openocd-macos-x86_64/openocd-macos-x86_64.tar.gz
+            artifacts/openocd-macos-arm64/openocd-macos-arm64.tar.gz
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

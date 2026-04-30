@@ -107,7 +107,8 @@ static bool swd_mode;
 #define INFO_CAPS_SWO_STREAMING_TRACE BIT(6)
 #define INFO_CAPS_UART_PORT           BIT(7)
 #define INFO_CAPS_USB_COM_PORT        BIT(8)
-#define INFO_CAPS__NUM_CAPS               9
+#define INFO_CAPS_CJTAG               BIT(9)
+#define INFO_CAPS__NUM_CAPS               10
 
 /* CMD_LED */
 #define LED_ID_CONNECT            0x00
@@ -120,6 +121,7 @@ static bool swd_mode;
 #define CONNECT_DEFAULT           0x00
 #define CONNECT_SWD               0x01
 #define CONNECT_JTAG              0x02
+#define CONNECT_CJTAG             0x03
 
 /* CMSIS-DAP Common SWD/JTAG Commands */
 #define CMD_DAP_DELAY             0x09
@@ -220,6 +222,7 @@ static const char * const info_caps_str[INFO_CAPS__NUM_CAPS] = {
 	"SWO streaming trace supported",
 	"UART communication port supported",
 	"UART via USB COM port supported",
+	"CJTAG supported",
 };
 
 struct pending_scan_result {
@@ -1173,8 +1176,15 @@ static int cmsis_dap_get_caps_info(void)
 			caps |= (uint16_t)data[2] << 8;
 
 		cmsis_dap_handle->caps = caps;
-
-		for (unsigned int i = 0; i < INFO_CAPS__NUM_CAPS; ++i) {
+		if (caps & INFO_CAPS_SWD)
+			LOG_INFO("CMSIS-DAP: %s", info_caps_str[0]);
+		if (caps & INFO_CAPS_JTAG)
+			LOG_INFO("CMSIS-DAP: %s", info_caps_str[1]);
+		if (caps & INFO_CAPS_CJTAG)
+			LOG_INFO("CMSIS-DAP: %s", info_caps_str[9]);
+		for (int i = 2; i < INFO_CAPS__NUM_CAPS; ++i) {
+			if (i ==  __builtin_ctz(INFO_CAPS_CJTAG))
+				continue;
 			if (caps & BIT(i))
 				LOG_INFO("CMSIS-DAP: %s", info_caps_str[i]);
 		}
@@ -1346,12 +1356,15 @@ static int cmsis_dap_init(void)
 			LOG_ERROR("CMSIS-DAP: JTAG not supported");
 			return ERROR_JTAG_DEVICE_ERROR;
 		}
-
-		retval = cmsis_dap_cmd_dap_connect(CONNECT_JTAG);
+		if (transport_is_cjtag() == true) {
+			retval = cmsis_dap_cmd_dap_connect(CONNECT_CJTAG);
+			LOG_INFO("CMSIS-DAP: Interface Initialised (CJTAG)");
+		} else {
+			retval = cmsis_dap_cmd_dap_connect(CONNECT_JTAG);
+			LOG_INFO("CMSIS-DAP: Interface Initialised (JTAG)");
+		}
 		if (retval != ERROR_OK)
 			return retval;
-
-		LOG_INFO("CMSIS-DAP: Interface Initialised (JTAG)");
 	}
 
 	/* Be conservative and suppress submitting multiple HID requests
@@ -2314,6 +2327,8 @@ static const struct swd_driver cmsis_dap_swd_driver = {
 	.run = cmsis_dap_swd_run_queue,
 };
 
+static const char * const cmsis_dap_transport[] = { "swd", "jtag", "cjtag", NULL };
+
 static struct jtag_interface cmsis_dap_interface = {
 	.supported = DEBUG_CAP_TMS_SEQ,
 	.execute_queue = cmsis_dap_execute_queue,
@@ -2321,7 +2336,7 @@ static struct jtag_interface cmsis_dap_interface = {
 
 struct adapter_driver cmsis_dap_adapter_driver = {
 	.name = "cmsis-dap",
-	.transport_ids = TRANSPORT_SWD | TRANSPORT_JTAG,
+	.transport_ids = TRANSPORT_SWD | TRANSPORT_JTAG | TRANSPORT_CJTAG,
 	.transport_preferred_id = TRANSPORT_SWD,
 	.commands = cmsis_dap_command_handlers,
 

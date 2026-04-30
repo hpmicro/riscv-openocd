@@ -1834,12 +1834,36 @@ static void jtag_constructor(void)
 	transport_register(&jtag_transport);
 }
 
+static struct transport cjtag_transport = {
+	.id = TRANSPORT_CJTAG,
+	.select = jtag_select,
+	.init = jtag_init,
+};
+
+static void cjtag_constructor(void) __attribute__((constructor));
+static void cjtag_constructor(void)
+{
+	transport_register(&cjtag_transport);
+}
+
+bool transport_is_cjtag(void)
+{
+	return get_current_transport() == &cjtag_transport;
+}
+
 /** Returns true if the current debug session
  * is using JTAG as its transport.
  */
 bool transport_is_jtag(void)
 {
-	return get_current_transport() == &jtag_transport;
+	/*
+	 * Also return true for CJTAG to ensure compatibility with CMSIS-DAP.
+	 * Except for the connect mode and some sequence transfers, CJTAG and JTAG
+	 * share most of the same logic and command flows. Treating CJTAG as JTAG here
+	 * allows reuse of the JTAG code path for CMSIS-DAP and similar adapters.
+	 */
+	return (get_current_transport() == &jtag_transport) ||
+		(get_current_transport() == &cjtag_transport);
 }
 
 int adapter_resets(int trst, int srst)

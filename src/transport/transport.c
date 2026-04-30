@@ -59,6 +59,7 @@ static const struct {
 	{ TRANSPORT_DAPDIRECT_JTAG, "jtag", "jtag (dapdirect)", "dapdirect_jtag", },
 	{ TRANSPORT_DAPDIRECT_SWD,  "swd",  "swd (dapdirect)",  "dapdirect_swd",  },
 	{ TRANSPORT_SWIM,           "swim", "swim",             NULL,             },
+	{ TRANSPORT_CJTAG,          "cjtag", "cjtag",           NULL,             },
 };
 
 /** List of transports registered in OpenOCD, alphabetically sorted per name. */

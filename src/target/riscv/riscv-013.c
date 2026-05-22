@@ -5244,6 +5244,9 @@ static int riscv013_halt_go(struct target *target)
 
 	if (select_prepped_harts(target) != ERROR_OK)
 		return ERROR_FAIL;
+	if (dm->current_hartid != HART_INDEX_MULTIPLE &&
+			dm013_select_target(target) != ERROR_OK)
+		return ERROR_FAIL;
 
 	LOG_TARGET_DEBUG(target, "halting hart");
 
@@ -5493,6 +5496,10 @@ static int riscv013_step_or_resume_current_hart(struct target *target,
 	riscv_reg_cache_invalidate_all(target);
 
 	dm013_info_t *dm = get_dm(target);
+	if (!dm)
+		return ERROR_FAIL;
+	if (dm013_select_target(target) != ERROR_OK)
+		return ERROR_FAIL;
 	/* Issue the resume command, and then wait for the current hart to resume. */
 	uint32_t dmcontrol = DM_DMCONTROL_DMACTIVE | DM_DMCONTROL_RESUMEREQ;
 	dmcontrol = set_dmcontrol_hartsel(dmcontrol, dm->current_hartid);

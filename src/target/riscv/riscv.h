@@ -122,6 +122,12 @@ typedef struct {
 	char *name;
 } range_list_t;
 
+typedef struct {
+	struct list_head list;
+	target_addr_t start;
+	target_addr_t end;
+} address_range_list_t;
+
 #define DTM_DTMCS_VERSION_UNKNOWN ((unsigned int)-1)
 #define RISCV_TINFO_VERSION_UNKNOWN (-1)
 
@@ -349,6 +355,12 @@ struct riscv_info {
 	/* The list of registers to mark as "hidden". Hidden registers are available
 	 * but do not appear in gdb targets description or reg command output. */
 	struct list_head hide_csr;
+
+	/* Address ranges where software breakpoints must be implemented with
+	 * hardware triggers. This is useful for XIP flash regions that cannot be
+	 * patched safely at run time.
+	 */
+	struct list_head force_hw_breakpoint_ranges;
 
 	riscv_sample_config_t sample_config;
 	struct riscv_sample_buf sample_buf;

@@ -754,6 +754,12 @@ static void riscv_deinit_target(struct target *target)
 		free(entry);
 	}
 
+	address_range_list_t *addr_entry, *addr_tmp;
+	list_for_each_entry_safe(addr_entry, addr_tmp, &info->force_hw_breakpoint_ranges, list) {
+		list_del(&addr_entry->list);
+		free(addr_entry);
+	}
+
 	free(target->arch_info);
 
 	target->arch_info = NULL;
@@ -1604,10 +1610,31 @@ int riscv_read_by_any_size(struct target *target, target_addr_t address, uint32_
 	return ERROR_FAIL;
 }
 
+static bool riscv_should_force_hw_breakpoint(struct target *target, target_addr_t address)
+{
+	RISCV_INFO(r);
+	address_range_list_t *range;
+
+	list_for_each_entry(range, &r->force_hw_breakpoint_ranges, list) {
+		if (address >= range->start && address < range->end)
+			return true;
+	}
+
+	return false;
+}
+
 static int riscv_add_breakpoint(struct target *target, struct breakpoint *breakpoint)
 {
 	LOG_TARGET_DEBUG(target, "@0x%" TARGET_PRIxADDR, breakpoint->address);
 	assert(breakpoint);
+	if (breakpoint->type == BKPT_SOFT &&
+			riscv_should_force_hw_breakpoint(target, breakpoint->address)) {
+		LOG_TARGET_DEBUG(target,
+			"Converting configured software breakpoint BPID %" PRIu32
+			" at 0x%" TARGET_PRIxADDR " to hardware",
+			breakpoint->unique_id, breakpoint->address);
+		breakpoint->type = BKPT_HARD;
+	}
 	if (breakpoint->type == BKPT_SOFT) {
 		/** @todo check RVC for size/alignment */
 		if (!(breakpoint->length == 4 || breakpoint->length == 2)) {
@@ -1702,6 +1729,9 @@ static int riscv_remove_breakpoint(struct target *target,
 		}
 
 	} else if (breakpoint->type == BKPT_HARD) {
+		LOG_TARGET_DEBUG(target,
+			"Removing hardware breakpoint BPID %" PRIu32 " at 0x%" TARGET_PRIxADDR,
+			breakpoint->unique_id, breakpoint->address);
 		struct trigger trigger;
 		trigger_from_breakpoint(&trigger, breakpoint);
 		int result = remove_trigger(target, trigger.unique_id);
@@ -4369,6 +4399,59 @@ COMMAND_HANDLER(riscv_set_mem_access)
 	return ERROR_OK;
 }
 
+COMMAND_HANDLER(riscv_force_hw_breakpoint_range)
+{
+	struct target *target = get_current_target(CMD_CTX);
+	RISCV_INFO(r);
+
+	if (CMD_ARGC == 0) {
+		address_range_list_t *range;
+		const char *separator = "";
+
+		list_for_each_entry(range, &r->force_hw_breakpoint_ranges, list) {
+			command_print_sameline(CMD, "%s0x%" TARGET_PRIxADDR "-0x%" TARGET_PRIxADDR,
+					separator, range->start, range->end);
+			separator = " ";
+		}
+		command_print_sameline(CMD, "\n");
+		return ERROR_OK;
+	}
+
+	if (CMD_ARGC == 1 && !strcmp(CMD_ARGV[0], "clear")) {
+		address_range_list_t *range, *tmp;
+
+		list_for_each_entry_safe(range, tmp, &r->force_hw_breakpoint_ranges, list) {
+			list_del(&range->list);
+			free(range);
+		}
+		return ERROR_OK;
+	}
+
+	if (CMD_ARGC != 2)
+		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	target_addr_t start;
+	target_addr_t end;
+	COMMAND_PARSE_ADDRESS(CMD_ARGV[0], start);
+	COMMAND_PARSE_ADDRESS(CMD_ARGV[1], end);
+
+	if (end <= start) {
+		LOG_TARGET_ERROR(target,
+			"Invalid force_hw_breakpoint_range: end must be greater than start.");
+		return ERROR_COMMAND_ARGUMENT_INVALID;
+	}
+
+	address_range_list_t *range = calloc(1, sizeof(*range));
+	if (!range) {
+		LOG_TARGET_ERROR(target, "Out of memory while adding force_hw_breakpoint_range.");
+		return ERROR_FAIL;
+	}
+
+	range->start = start;
+	range->end = end;
+	list_add_tail(&range->list, &r->force_hw_breakpoint_ranges);
+	return ERROR_OK;
+}
 
 static bool parse_csr_address(const char *reg_address_str, unsigned int *reg_addr)
 {
@@ -5625,6 +5708,14 @@ static const struct command_registration riscv_exec_command_handlers[] = {
 			"of priority. Method can be one of: 'progbuf', 'sysbus' or 'abstract'."
 	},
 	{
+		.name = "force_hw_breakpoint_range",
+		.handler = riscv_force_hw_breakpoint_range,
+		.mode = COMMAND_ANY,
+		.usage = "[clear | start end]",
+		.help = "Configure address ranges where software breakpoints are converted "
+			"to hardware breakpoints. Ranges are half-open: start <= address < end."
+	},
+	{
 		.name = "expose_csrs",
 		.handler = riscv_set_expose_csrs,
 		.mode = COMMAND_CONFIG,
@@ -5967,6 +6058,7 @@ static void riscv_info_init(struct target *target, struct riscv_info *r)
 	INIT_LIST_HEAD(&r->expose_csr);
 	INIT_LIST_HEAD(&r->expose_custom);
 	INIT_LIST_HEAD(&r->hide_csr);
+	INIT_LIST_HEAD(&r->force_hw_breakpoint_ranges);
 
 	r->vsew64_supported = YNM_MAYBE;
 

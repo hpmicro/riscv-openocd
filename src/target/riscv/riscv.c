@@ -17,6 +17,7 @@
 #include "jtag/jtag.h"
 #include "target/register.h"
 #include "target/breakpoints.h"
+#include <rtt/rtt.h>
 #include "helper/base64.h"
 #include "helper/time_support.h"
 #include "riscv.h"
@@ -5869,6 +5870,9 @@ static const struct command_registration riscv_command_handlers[] = {
 	},
 	{
 		.chain = smp_command_handlers
+	},
+	{
+		.chain = rtt_target_command_handlers,
 	},
 	COMMAND_REGISTRATION_DONE
 };
